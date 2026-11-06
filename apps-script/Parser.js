@@ -58,7 +58,7 @@ function parseBillEmail(email) {
 
   var src = BILL_SOURCES[utility];
   var text = normalizeBody_(email.body);
-  var amount = text.match(/Fizetendő összeg:\s*(-?[\d.\s]*\d)\s*Ft/);
+  var amount = text.match(/Fizetendő összeg:\s*(-?[\d.\s]*\d)\s*(?:Ft|HUF)/);
   var due = text.match(/Fizetési határidő:\s*(\d{4}\.\d{2}\.\d{2})/);
   var account = text.match(src.accountLabel);
   var invoice = text.match(src.invoiceLabel);
@@ -99,7 +99,7 @@ function planSheetUpdate(rows, monthKey, cols, bill) {
   for (var i = 0; i < rows.length; i++) {
     if (String(rows[i][0]).trim() === monthKey) { rowIndex = i; break; }
   }
-  if (rowIndex === -1) return { action: 'conflict', reason: 'No row for ' + monthKey };
+  if (rowIndex === -1) return { action: 'conflict', reason: 'nincs ' + monthKey + ' sor' };
 
   var row = rows[rowIndex];
   var currentInvoice = String(row[cols.invoiceCol] || '').trim();
@@ -110,14 +110,14 @@ function planSheetUpdate(rows, monthKey, cols, bill) {
     return {
       action: 'conflict',
       row: rowIndex + 1,
-      reason: monthKey + ' already has invoice ' + currentInvoice + ' (new bill is ' + bill.invoiceNo + ')'
+      reason: 'számla ' + currentInvoice
     };
   }
   if (currentAmountNum !== null && bill.amount !== null && currentAmountNum !== bill.amount && currentInvoice !== bill.invoiceNo) {
     return {
       action: 'conflict',
       row: rowIndex + 1,
-      reason: monthKey + ' already shows ' + currentAmount + ' Ft (new bill is ' + bill.amount + ' Ft)'
+      reason: 'összeg ' + currentAmount + ' Ft'
     };
   }
 

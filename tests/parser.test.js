@@ -114,3 +114,14 @@ test('reading reminders', () => {
   assert.deepStrictEqual(readingRemindersFor({ year: 2026, month: 12, day: 1 }), []);
   assert.strictEqual(readingRemindersFor({ year: 2026, month: 11, day: 7 })[0].end, '2026.11.07');
 });
+
+test('reads older bills that say HUF instead of Ft', () => {
+  const bill = parseBillEmail({
+    from: 'ugyfelszolgalat@online.mvmnext.hu',
+    subject: 'Új földgázszámla készült 102753750709',
+    body: '| Fizetendő összeg: |\n| |\n| 973 HUF |\n| Fizetési határidő: |\n| 2025.08.14. |\n| Szerződéses folyószámlaszám: |\n| 30830774 |\n| Számla sorszáma (közleménybe): |\n| 102753750709 |'
+  });
+  assert.strictEqual(bill.amount, 973);
+  assert.strictEqual(bill.dueDate, '2025.08.14');
+  assert.strictEqual(bill.invoiceNo, '102753750709');
+});
