@@ -163,13 +163,13 @@ function planSheetUpdate(rows, monthKey, cols, bill) {
  * Meter-reading windows. Days are inclusive, in Hungarian local time; -1 means the last day of the month.
  * Gas: every month 23-26 (seen on MVM Next for Fő út 191, Nov 2026).
  * Electricity: quarterly, 1-7 of Feb, May, Aug, Nov (window was open until 11-07 in Nov 2026).
- * Water: submitted by hand, reminder on the last day of every month.
+ * Water: submitted by hand, reminder on the 1st of every month.
  */
 var ALL_MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 var READING_WINDOWS = [
   { utility: 'gas', name: 'Gáz', months: ALL_MONTHS, startDay: 23, endDay: 26, url: 'https://onlineugyintezes.mvmnext.hu/' },
   { utility: 'electricity', name: 'Villany', months: [2, 5, 8, 11], startDay: 1, endDay: 7, url: 'https://onlineugyintezes.mvmnext.hu/' },
-  { utility: 'water', name: 'Víz', months: ALL_MONTHS, startDay: -1, endDay: -1 }
+  { utility: 'water', name: 'Víz', months: ALL_MONTHS, startDay: 1, endDay: 1 }
 ];
 
 function daysInMonth_(year, month) {

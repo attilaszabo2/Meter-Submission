@@ -110,8 +110,7 @@ test('flags a missing month row', () => {
 test('reading reminders', () => {
   assert.deepStrictEqual(readingRemindersFor({ year: 2026, month: 11, day: 23 }).map((r) => [r.utility, r.kind]), [['gas', 'opens']]);
   assert.deepStrictEqual(readingRemindersFor({ year: 2026, month: 11, day: 26 }).map((r) => [r.utility, r.kind]), [['gas', 'last-day']]);
-  assert.deepStrictEqual(readingRemindersFor({ year: 2027, month: 2, day: 1 }).map((r) => [r.utility, r.kind]), [['electricity', 'opens']]);
-  assert.deepStrictEqual(readingRemindersFor({ year: 2026, month: 12, day: 1 }), []);
+  assert.deepStrictEqual(readingRemindersFor({ year: 2026, month: 12, day: 2 }), []);
   assert.strictEqual(readingRemindersFor({ year: 2026, month: 11, day: 7 })[0].end, '2026.11.07');
 });
 
@@ -152,9 +151,15 @@ test('a bill without invoice number only fills or checks the amount', () => {
   assert.deepStrictEqual(planSheetUpdate(rows, '2026.11', cols, { invoiceNo: '5120265000700000', amount: 6680 }), { action: 'write', row: 3, writes: { 2: '5120265000700000' } });
 });
 
-test('water reminder on the last day of the month', () => {
-  assert.deepStrictEqual(readingRemindersFor({ year: 2026, month: 11, day: 30 }).map((r) => [r.utility, r.kind, r.end]), [['water', 'due', '2026.11.30']]);
-  assert.deepStrictEqual(readingRemindersFor({ year: 2027, month: 2, day: 28 }).map((r) => r.utility), ['water']);
-  assert.deepStrictEqual(readingRemindersFor({ year: 2028, month: 2, day: 28 }).map((r) => r.utility), []);
+test('water reminder on the 1st of the month', () => {
+  assert.deepStrictEqual(readingRemindersFor({ year: 2026, month: 12, day: 1 }).map((r) => [r.utility, r.kind, r.end]), [['water', 'due', '2026.12.01']]);
+  assert.deepStrictEqual(readingRemindersFor({ year: 2027, month: 2, day: 1 }).map((r) => [r.utility, r.kind]), [['electricity', 'opens'], ['water', 'due']]);
+  assert.deepStrictEqual(readingRemindersFor({ year: 2026, month: 11, day: 30 }), []);
   assert.strictEqual(readingRemindersFor({ year: 2026, month: 11, day: 23 })[0].url, 'https://onlineugyintezes.mvmnext.hu/');
+});
+
+test('last-day windows (-1) resolve to the end of the month', () => {
+  const w = [{ utility: 'x', name: 'X', months: [2], startDay: -1, endDay: -1 }];
+  assert.strictEqual(readingRemindersFor({ year: 2027, month: 2, day: 28 }, w)[0].end, '2027.02.28');
+  assert.deepStrictEqual(readingRemindersFor({ year: 2028, month: 2, day: 28 }, w), []);
 });
