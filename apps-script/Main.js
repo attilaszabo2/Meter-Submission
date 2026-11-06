@@ -28,12 +28,12 @@ function setup() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (['checkBills', 'checkReadingReminders'].indexOf(t.getHandlerFunction()) !== -1) ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger('checkBills').timeBased().everyHours(4).create();
+  ScriptApp.newTrigger('checkBills').timeBased().everyDays(1).atHour(7).inTimezone(CONFIG.timeZone).create();
   ScriptApp.newTrigger('checkReadingReminders').timeBased().everyDays(1).atHour(8).inTimezone(CONFIG.timeZone).create();
   var result = processBills_({ notify: false, query: '', includeProcessed: false });
   sendSummary_('Számlák automatizálás bekapcsolva',
     'Az automatikus számlafigyelés be van kapcsolva. Ezeket a régebbi számlákat dolgoztam fel:', result,
-    'Mostantól 4 óránként ellenőrzöm az új MVM számlákat, és szólok, ha mérőállást kell diktálni.');
+    'Mostantól naponta egyszer (reggel 7-kor) ellenőrzöm az új MVM számlákat, és szólok, ha mérőállást kell diktálni.');
 }
 
 /**
