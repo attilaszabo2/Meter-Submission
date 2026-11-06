@@ -9,17 +9,23 @@ var CONFIG = {
   // Only bills for these accounts (Fő út 191) are written to the sheet.
   accounts: {
     gas: '30830774',          // Szerződéses folyószámlaszám
-    electricity: '2600107389' // Vevő (fizető) azonosító
+    electricity: '2600107389', // Vevő (fizető) azonosító
+    internet: '740732742'      // Flip azonosító
   },
   tabs: {
     gas: { name: 'Gáz', invoiceCol: 2, amountCol: 3 },          // C = Számla, D = Fizetendő
-    electricity: { name: 'Villany', invoiceCol: 1, amountCol: 2 } // B = Számla, C = Fizetendő
+    electricity: { name: 'Villany', invoiceCol: 1, amountCol: 2 }, // B = Számla, C = Fizetendő
+    internet: { name: 'Internet', invoiceCol: 1, amountCol: 2 }    // B = Számla, C = Fizetendő
   },
-  utilityNames: { gas: 'Gáz', electricity: 'Villany' },
+  utilityNames: { gas: 'Gáz', electricity: 'Villany', internet: 'Internet' },
+  pay: {
+    gas: { url: 'https://onlineugyintezes.mvmnext.hu/', label: 'Fizetés az MVM Next oldalán' },
+    electricity: { url: 'https://onlineugyintezes.mvmnext.hu/', label: 'Fizetés az MVM Next oldalán' },
+    internet: { url: 'https://www.flip.hu/myflip/ugyfelszolgalat/kezdo', label: 'Fizetés a Flip oldalán' }
+  },
   processedLabel: 'Szamlak-feldolgozva',
   // Leave empty to send to the account that owns the script.
   notifyEmail: '',
-  mvmUrl: 'https://onlineugyintezes.mvmnext.hu/',
   timeZone: 'Europe/Budapest'
 };
 
@@ -33,7 +39,7 @@ function setup() {
   var result = processBills_({ notify: false, query: '', includeProcessed: false });
   sendSummary_('Számlák automatizálás bekapcsolva',
     'Az automatikus számlafigyelés be van kapcsolva. Ezeket a régebbi számlákat dolgoztam fel:', result,
-    'Mostantól naponta egyszer (reggel 7-kor) ellenőrzöm az új MVM számlákat, és szólok, ha mérőállást kell diktálni.');
+    'Mostantól naponta egyszer (reggel 7-kor) ellenőrzöm az új MVM és Flip számlákat, és szólok, ha mérőállást kell leadni.');
 }
 
 /**
@@ -42,7 +48,7 @@ function setup() {
  */
 function backfill() {
   var result = processBills_({ notify: false, query: '', includeProcessed: true });
-  sendSummary_('Számlák: régi számlák pótlása kész', 'Újra átnéztem az összes MVM számlát, és kitöltöttem az üres cellákat:', result, '');
+  sendSummary_('Számlák: régi számlák pótlása kész', 'Újra átnéztem az összes MVM és Flip számlát, és kitöltöttem az üres cellákat:', result, '');
 }
 
 /** Scheduled: looks for new MVM bill emails. */
@@ -58,7 +64,7 @@ function checkReadingReminders() {
   reminders.forEach(function (r) {
     var key = 'reminder:' + r.utility + ':' + r.start + ':' + r.kind;
     if (props.getProperty(key)) return;
-    sendMail_(renderReminderEmail(r, CONFIG.mvmUrl));
+    sendMail_(renderReminderEmail(r));
     props.setProperty(key, new Date().toISOString());
   });
 }
@@ -89,23 +95,35 @@ function processBills_(options) {
 }
 
 function handleMessage_(ss, msg, result) {
-  var bill = parseBillEmail({
+  var email = {
     from: msg.getFrom(),
     subject: msg.getSubject(),
     body: msg.getPlainBody(),
     attachmentNames: msg.getAttachments().map(function (a) { return a.getName(); })
-  });
+  };
+  var payments = parseFlipPayment(email);
+  if (payments) {
+    // Payment confirmations only add invoice numbers; they never trigger a "new bill" email.
+    payments.forEach(function (p) {
+      applyBill_(ss, { utility: 'internet', invoiceNo: p.invoiceNo, amount: p.amount }, p.monthKey, result, true);
+    });
+    return;
+  }
+  var bill = parseBillEmail(email);
   if (!bill) return;
-  if (!bill.accountId || !bill.invoiceNo || bill.amount === null) {
+  var needsInvoice = !BILL_SOURCES[bill.utility].noInvoice;
+  if (!bill.accountId || (needsInvoice && !bill.invoiceNo) || bill.amount === null) {
     result.unreadable.push({ subject: msg.getSubject(), date: Utilities.formatDate(msg.getDate(), CONFIG.timeZone, 'yyyy.MM.dd') });
     return;
   }
   if (bill.accountId !== CONFIG.accounts[bill.utility]) { result.otherAddress++; return; }
+  applyBill_(ss, bill, Utilities.formatDate(msg.getDate(), CONFIG.timeZone, 'yyyy.MM'), result, false);
+}
 
+function applyBill_(ss, bill, monthKey, result, isPayment) {
   var tab = CONFIG.tabs[bill.utility];
   var sheet = ss.getSheetByName(tab.name);
-  var monthKey = Utilities.formatDate(msg.getDate(), CONFIG.timeZone, 'yyyy.MM');
-  var entry = { bill: bill, monthKey: monthKey, tab: tab.name };
+  var entry = { bill: bill, monthKey: monthKey, tab: tab.name, isPayment: isPayment };
   var plan = planSheetUpdate(sheet.getDataRange().getDisplayValues(), monthKey, tab, bill);
 
   if (plan.action === 'write') {
@@ -114,7 +132,7 @@ function handleMessage_(ss, msg, result) {
     });
     result.written.push(entry);
   } else if (plan.action === 'already') {
-    result.already.push(entry);
+    if (!isPayment) result.already.push(entry);
   } else {
     entry.reason = plan.reason;
     result.conflicts.push(entry);
@@ -123,6 +141,8 @@ function handleMessage_(ss, msg, result) {
 
 function notifyBills_(result) {
   var notify = function (e, written) {
+    if (e.isPayment) return;
+    var pay = CONFIG.pay[e.bill.utility];
     sendMail_(renderBillEmail({
       utilityName: CONFIG.utilityNames[e.bill.utility],
       amount: e.bill.amount,
@@ -131,13 +151,13 @@ function notifyBills_(result) {
       tab: e.tab,
       monthKey: e.monthKey,
       written: written
-    }, CONFIG.mvmUrl));
+    }, pay.url, pay.label));
   };
   result.written.forEach(function (e) { notify(e, true); });
   // "already" bills were typed in by hand, but this is still the first email about them.
   result.already.forEach(function (e) { notify(e, false); });
   if (result.conflicts.length || result.unreadable.length) {
-    sendSummary_('Számlák: ellenőrizd kézzel', 'Új MVM számla érkezett, de nem tudtam automatikusan beírni:', {
+    sendSummary_('Számlák: ellenőrizd kézzel', 'Új számla érkezett, de nem tudtam automatikusan beírni:', {
       written: [], already: [], conflicts: result.conflicts, unreadable: result.unreadable, otherAddress: 0
     }, '');
   }
