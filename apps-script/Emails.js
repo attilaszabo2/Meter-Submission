@@ -69,16 +69,16 @@ function section_(title, color) {
  * Email for one new bill.
  * @param {{utilityName: string, amount: number, dueDate: string, invoiceNo: string, tab: string, monthKey: string, written: boolean}} b
  */
-function renderBillEmail(b, mvmUrl) {
+function renderBillEmail(b, payUrl, payLabel) {
   var c = EMAIL_COLORS;
-  var subject = 'Új ' + b.utilityName.toLowerCase() + 'számla: ' + formatFt(b.amount).replace(/ /g, ' ') + ', határidő ' + b.dueDate;
+  var subject = 'Új ' + b.utilityName.toLowerCase() + 'számla: ' + formatFt(b.amount).replace(/\u00a0/g, ' ') + ', határidő ' + b.dueDate;
   var inner =
     '<div style="font-size:32px;font-weight:bold;margin:4px 0;">' + esc_(formatFt(b.amount)) + '</div>' +
     '<div style="color:' + c.muted + ';margin-bottom:16px;">Fizetési határidő: <b style="color:' + c.text + ';">' + esc_(b.dueDate) + '</b></div>' +
-    table_(['Közmű', 'Számlaszám', 'Sor a táblában'], [[b.utilityName, b.invoiceNo, b.tab + ' · ' + b.monthKey]]) +
+    table_(['Közmű', 'Számlaszám', 'Sor a táblában'], [[b.utilityName, b.invoiceNo || '—', b.tab + ' · ' + b.monthKey]]) +
     '<div style="margin:0 0 16px;color:' + (b.written ? c.ok : c.muted) + ';">' +
     (b.written ? '✓ Beírtam a táblázatba.' : 'Ez a számla már szerepelt a táblázatban.') + '</div>' +
-    button_('Fizetés az MVM Next oldalán', mvmUrl);
+    button_(payLabel || 'Fizetés', payUrl);
   return { subject: subject, html: layout_('Új ' + b.utilityName.toLowerCase() + 'számla érkezett', inner, 'Automatikus értesítés a Számlák táblázatból.') };
 }
 
@@ -86,19 +86,29 @@ function renderBillEmail(b, mvmUrl) {
  * Meter-reading reminder.
  * @param {{name: string, kind: string, start: string, end: string}} r
  */
-function renderReminderEmail(r, mvmUrl) {
-  var opens = r.kind === 'opens';
-  var subject = opens
-    ? r.name + ' mérőállás diktálás most nyílik (' + r.start + ' – ' + r.end + ')'
-    : r.name + ' mérőállás diktálás ma zárul (' + r.end + ')';
+function renderReminderEmail(r) {
+  var subject, lead;
+  if (r.kind === 'opens') {
+    subject = r.name + ' mérőállás diktálás most nyílik (' + r.start + ' – ' + r.end + ')';
+    lead = 'Megnyílt a diktálási időszak.';
+  } else if (r.kind === 'last-day') {
+    subject = r.name + ' mérőállás diktálás ma zárul (' + r.end + ')';
+    lead = '<b>Ma van az utolsó nap</b> a diktálásra.';
+  } else {
+    subject = r.name + ' mérőállás: ma kell leolvasni (' + r.end + ')';
+    lead = '<b>Ma van</b> a havi leolvasás napja.';
+  }
+  var period = r.start === r.end ? r.start : r.start + ' – ' + r.end;
   var inner =
-    '<p style="margin:0 0 12px;">' + (opens ? 'Megnyílt a diktálási időszak.' : '<b>Ma van az utolsó nap</b> a diktálásra.') + '</p>' +
-    table_(['Közmű', 'Időszak'], [[r.name, r.start + ' – ' + r.end]]) +
-    '<p style="margin:0 0 16px;">Olvasd le a mérőórát, és add meg az állást az MVM Next oldalán.</p>' +
-    button_('Mérőállás diktálása', mvmUrl);
+    '<p style="margin:0 0 12px;">' + lead + '</p>' +
+    table_(['Közmű', 'Időszak'], [[r.name, period]]) +
+    '<p style="margin:0 0 16px;">' + (r.url
+      ? 'Olvasd le a mérőórát, és add meg az állást az online ügyfélszolgálaton.'
+      : 'Olvasd le a mérőórát, és add le az állást a szokásos módon.') + '</p>' +
+    (r.url ? button_('Mérőállás diktálása', r.url) : '');
   return {
     subject: subject,
-    html: layout_(r.name + ' mérőállás diktálás', inner, 'Ha már diktáltál ebben az időszakban, ezt az emlékeztetőt figyelmen kívül hagyhatod.')
+    html: layout_(r.name + ' mérőállás', inner, 'Ha már leadtad ebben az időszakban, ezt az emlékeztetőt figyelmen kívül hagyhatod.')
   };
 }
 
@@ -126,13 +136,13 @@ function renderSummaryEmail(title, intro, r, footer) {
   if (r.written.length) {
     inner += section_('Beírt számlák', c.ok);
     inner += table_(['Hónap', 'Közmű', 'Számlaszám', 'Összeg'],
-      r.written.map(function (e) { return [e.monthKey, e.tab, e.bill.invoiceNo, formatFt(e.bill.amount)]; }), [3]);
+      r.written.map(function (e) { return [e.monthKey, e.tab, e.bill.invoiceNo || '—', formatFt(e.bill.amount)]; }), [3]);
   }
   if (r.conflicts.length) {
     inner += section_('Nem írtam be, nézd meg kézzel', c.warn);
     inner += '<div style="font-size:12px;color:' + c.muted + ';">Az adott hónapban már van más érték. Ezek többnyire helyesbítő vagy jóváíró számlák.</div>';
     inner += table_(['Hónap', 'Közmű', 'Számlaszám', 'Összeg', 'A táblában most'],
-      r.conflicts.map(function (e) { return [e.monthKey, e.tab, e.bill.invoiceNo, formatFt(e.bill.amount), e.reason]; }), [3]);
+      r.conflicts.map(function (e) { return [e.monthKey, e.tab, e.bill.invoiceNo || '—', formatFt(e.bill.amount), e.reason]; }), [3]);
   }
   if (r.unreadable.length) {
     inner += section_('Nem tudtam értelmezni', c.warn);

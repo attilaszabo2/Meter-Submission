@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { parseBillEmail, planSheetUpdate, readingRemindersFor } = require('../apps-script/Parser.js');
+const { parseBillEmail, parseFlipPayment, planSheetUpdate, readingRemindersFor } = require('../apps-script/Parser.js');
 
 // Trimmed from real MVM Next emails (Nov/Oct 2026).
 const gasBody = `MVM E-számla - Földgáz
@@ -124,4 +124,37 @@ test('reads older bills that say HUF instead of Ft', () => {
   assert.strictEqual(bill.amount, 973);
   assert.strictEqual(bill.dueDate, '2025.08.14');
   assert.strictEqual(bill.invoiceNo, '102753750709');
+});
+
+const flipNotice = `Kedves Szabó Attila!\n\n| |\n\nA(z) *740732742* Flip azonosítóhoz kapcsolódóan elkészült az új havi számlád.\n\n| |\n\nSzámla összege: *6680 Ft*\n\n| |\n\nA számla fizetési határideje: *2026.11.17*`;
+
+test('parses a Flip bill notice (no invoice number)', () => {
+  const bill = parseBillEmail({ from: 'Flip <noreply@flip.hu>', subject: 'FLIP számlaértesítő', body: flipNotice });
+  assert.deepStrictEqual(bill, { utility: 'internet', accountId: '740732742', invoiceNo: null, amount: 6680, dueDate: '2026.11.17' });
+});
+
+test('parses a Flip payment confirmation into invoice numbers', () => {
+  const body = `| # Sikeres számlabefizetés |\n| Tranzakció azonosító: | 1018926952 |\nBefizetett számlák\n| Számla kelte: | 2026.10.02. |\n| Fizetési határidő: | 2026.10.19. |\n| Számla száma: | 5120265000640117 |\n| Folyószámla száma: | 900079239 |\n| Befizetett összeg: | 6 680 Ft |`;
+  assert.deepStrictEqual(parseFlipPayment({ from: 'noreply@flip.hu', subject: 'Sikeres fizetés', body }),
+    [{ invoiceNo: '5120265000640117', amount: 6680, monthKey: '2026.10' }]);
+  assert.strictEqual(parseFlipPayment({ from: 'mvm@onlineugyintezes.mvmnext.hu', subject: 'Sikeres számlafizetés', body }), null);
+  assert.strictEqual(parseFlipPayment({ from: 'noreply@flip.hu', subject: 'FLIP számlaértesítő', body }), null);
+});
+
+test('a bill without invoice number only fills or checks the amount', () => {
+  const cols = { invoiceCol: 1, amountCol: 2 };
+  const rows = [['Dátum'], ['2026.10', '5120265000640117', '6 680'], ['2026.11', '', '6 680'], ['2026.12', '', '']];
+  assert.strictEqual(planSheetUpdate(rows, '2026.10', cols, { invoiceNo: null, amount: 6680 }).action, 'already');
+  assert.strictEqual(planSheetUpdate(rows, '2026.11', cols, { invoiceNo: null, amount: 6680 }).action, 'already');
+  assert.deepStrictEqual(planSheetUpdate(rows, '2026.12', cols, { invoiceNo: null, amount: 6680 }), { action: 'write', row: 4, writes: { 3: 6680 } });
+  assert.strictEqual(planSheetUpdate(rows, '2026.11', cols, { invoiceNo: null, amount: 7000 }).action, 'conflict');
+  // payment confirmation adds the invoice number next to a matching amount
+  assert.deepStrictEqual(planSheetUpdate(rows, '2026.11', cols, { invoiceNo: '5120265000700000', amount: 6680 }), { action: 'write', row: 3, writes: { 2: '5120265000700000' } });
+});
+
+test('water reminder on the last day of the month', () => {
+  assert.deepStrictEqual(readingRemindersFor({ year: 2026, month: 11, day: 30 }).map((r) => [r.utility, r.kind, r.end]), [['water', 'due', '2026.11.30']]);
+  assert.deepStrictEqual(readingRemindersFor({ year: 2027, month: 2, day: 28 }).map((r) => r.utility), ['water']);
+  assert.deepStrictEqual(readingRemindersFor({ year: 2028, month: 2, day: 28 }).map((r) => r.utility), []);
+  assert.strictEqual(readingRemindersFor({ year: 2026, month: 11, day: 23 })[0].url, 'https://onlineugyintezes.mvmnext.hu/');
 });
