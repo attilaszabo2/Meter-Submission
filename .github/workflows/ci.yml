@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Placeholder checks until the app code lands.
+      # Replace or extend with real build/lint/test steps (e.g. npm test, pytest).
+      - name: Check repository
+        run: |
+          test -f README.md
+          echo "CI passed"
