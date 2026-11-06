@@ -23,40 +23,42 @@ var CONFIG = {
   timeZone: 'Europe/Budapest'
 };
 
-/** Run once: installs the schedules and imports past bills without emailing about them. */
+/** Run once: installs the schedules and imports past bills without emailing about each one. */
 function setup() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (['checkBills', 'checkReadingReminders'].indexOf(t.getHandlerFunction()) !== -1) ScriptApp.deleteTrigger(t);
   });
   ScriptApp.newTrigger('checkBills').timeBased().everyHours(4).create();
   ScriptApp.newTrigger('checkReadingReminders').timeBased().everyDays(1).atHour(8).inTimezone(CONFIG.timeZone).create();
-  var result = processBills_({ notify: false, query: '' });
-  sendMail_('Számlák automatizálás bekapcsolva',
-    'Az automatikus számlafigyelés be van kapcsolva.\n\n' + summarize_(result) +
-    '\nMostantól 4 óránként ellenőrzöm az új MVM számlákat, és szólok, ha mérőállást kell diktálni.');
+  var result = processBills_({ notify: false, query: '', includeProcessed: false });
+  sendSummary_('Számlák automatizálás bekapcsolva',
+    'Az automatikus számlafigyelés be van kapcsolva. Ezeket a régebbi számlákat dolgoztam fel:', result,
+    'Mostantól 4 óránként ellenőrzöm az új MVM számlákat, és szólok, ha mérőállást kell diktálni.');
+}
+
+/**
+ * Re-reads every MVM bill email, including ones already processed, and fills any cells that are still empty.
+ * Never overwrites. Safe to run any time.
+ */
+function backfill() {
+  var result = processBills_({ notify: false, query: '', includeProcessed: true });
+  sendSummary_('Számlák: régi számlák pótlása kész', 'Újra átnéztem az összes MVM számlát, és kitöltöttem az üres cellákat:', result, '');
 }
 
 /** Scheduled: looks for new MVM bill emails. */
 function checkBills() {
-  processBills_({ notify: true, query: ' newer_than:30d' });
+  processBills_({ notify: true, query: ' newer_than:30d', includeProcessed: false });
 }
 
 /** Scheduled daily: emails a reminder when a reading window opens or closes. */
 function checkReadingReminders() {
-  var now = new Date();
-  var parts = Utilities.formatDate(now, CONFIG.timeZone, 'yyyy-M-d').split('-').map(Number);
+  var parts = Utilities.formatDate(new Date(), CONFIG.timeZone, 'yyyy-M-d').split('-').map(Number);
   var reminders = readingRemindersFor({ year: parts[0], month: parts[1], day: parts[2] });
   var props = PropertiesService.getScriptProperties();
   reminders.forEach(function (r) {
     var key = 'reminder:' + r.utility + ':' + r.start + ':' + r.kind;
     if (props.getProperty(key)) return;
-    var subject = r.kind === 'opens'
-      ? r.name + ' mérőállás diktálás most nyílik (' + r.start + ' – ' + r.end + ')'
-      : r.name + ' mérőállás diktálás ma zárul (' + r.end + ')';
-    var body = 'Fő út 191: ' + r.name.toLowerCase() + ' mérőállás diktálás ' + r.start + ' és ' + r.end + ' között.\n\n' +
-      'Diktálás itt: ' + CONFIG.mvmUrl + '\n\n' +
-      'Ha már diktáltál ebben az időszakban, ezt az emlékeztetőt figyelmen kívül hagyhatod.';
-    sendMail_(subject, body);
+    sendMail_(renderReminderEmail(r, CONFIG.mvmUrl));
     props.setProperty(key, new Date().toISOString());
   });
 }
@@ -65,7 +67,8 @@ function processBills_(options) {
   var label = GmailApp.getUserLabelByName(CONFIG.processedLabel) || GmailApp.createLabel(CONFIG.processedLabel);
   var senders = [];
   Object.keys(BILL_SOURCES).forEach(function (k) { senders = senders.concat(BILL_SOURCES[k].senders); });
-  var query = 'from:(' + senders.join(' OR ') + ') -label:' + CONFIG.processedLabel.replace(/[\/ ]/g, '-') + options.query;
+  var query = 'from:(' + senders.join(' OR ') + ')' +
+    (options.includeProcessed ? '' : ' -label:' + CONFIG.processedLabel) + options.query;
 
   var result = { written: [], already: [], conflicts: [], otherAddress: 0, unreadable: [] };
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -94,7 +97,7 @@ function handleMessage_(ss, msg, result) {
   });
   if (!bill) return;
   if (!bill.accountId || !bill.invoiceNo || bill.amount === null) {
-    result.unreadable.push({ subject: msg.getSubject(), date: msg.getDate() });
+    result.unreadable.push({ subject: msg.getSubject(), date: Utilities.formatDate(msg.getDate(), CONFIG.timeZone, 'yyyy.MM.dd') });
     return;
   }
   if (bill.accountId !== CONFIG.accounts[bill.utility]) { result.otherAddress++; return; }
@@ -119,44 +122,65 @@ function handleMessage_(ss, msg, result) {
 }
 
 function notifyBills_(result) {
-  result.written.concat(result.already).forEach(function (e) {
-    // "already" bills were typed in by hand, but this is still the first email about them.
-    sendMail_('Új ' + CONFIG.utilityNames[e.bill.utility].toLowerCase() + 'számla: ' + formatFt_(e.bill.amount) +
-      ', határidő ' + e.bill.dueDate,
-      'Fő út 191, ' + CONFIG.utilityNames[e.bill.utility] + '\n' +
-      'Összeg: ' + formatFt_(e.bill.amount) + '\n' +
-      'Fizetési határidő: ' + e.bill.dueDate + '\n' +
-      'Számlaszám: ' + e.bill.invoiceNo + '\n\n' +
-      'Beírva a(z) "' + e.tab + '" fül ' + e.monthKey + ' sorába.\n\n' +
-      'Fizetés: ' + CONFIG.mvmUrl);
-  });
+  var notify = function (e, written) {
+    sendMail_(renderBillEmail({
+      utilityName: CONFIG.utilityNames[e.bill.utility],
+      amount: e.bill.amount,
+      dueDate: e.bill.dueDate,
+      invoiceNo: e.bill.invoiceNo,
+      tab: e.tab,
+      monthKey: e.monthKey,
+      written: written
+    }, CONFIG.mvmUrl));
+  };
+  result.written.forEach(function (e) { notify(e, true); });
+  // "already" bills were typed in by hand, but this is still the first email about them.
+  result.already.forEach(function (e) { notify(e, false); });
   if (result.conflicts.length || result.unreadable.length) {
-    sendMail_('Számlák: ellenőrizd kézzel', summarize_(result));
+    sendSummary_('Számlák: ellenőrizd kézzel', 'Új MVM számla érkezett, de nem tudtam automatikusan beírni:', {
+      written: [], already: [], conflicts: result.conflicts, unreadable: result.unreadable, otherAddress: 0
+    }, '');
   }
 }
 
-function summarize_(r) {
-  var lines = [];
-  lines.push('Beírt számlák: ' + r.written.length);
-  r.written.forEach(function (e) { lines.push('  ' + e.tab + ' ' + e.monthKey + ': ' + e.bill.invoiceNo + ', ' + formatFt_(e.bill.amount)); });
-  lines.push('Már a táblában: ' + r.already.length);
-  lines.push('Másik címhez tartozó számla (kihagyva): ' + r.otherAddress);
-  if (r.conflicts.length) {
-    lines.push('Nem írtam be, nézd meg kézzel:');
-    r.conflicts.forEach(function (e) { lines.push('  ' + e.tab + ': ' + e.reason + ', ' + formatFt_(e.bill.amount) + ', határidő ' + e.bill.dueDate); });
-  }
-  if (r.unreadable.length) {
-    lines.push('Nem tudtam értelmezni:');
-    r.unreadable.forEach(function (u) { lines.push('  ' + u.subject + ' (' + u.date + ')'); });
-  }
-  return lines.join('\n') + '\n';
+function sendSummary_(title, intro, result, footer) {
+  sendMail_(renderSummaryEmail(title, intro, result, footer));
 }
 
-function formatFt_(n) {
-  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' Ft';
-}
-
-function sendMail_(subject, body) {
+function sendMail_(email) {
   var to = CONFIG.notifyEmail || Session.getEffectiveUser().getEmail();
-  MailApp.sendEmail(to, subject, body);
+  var plain = email.html.replace(/<br\s*\/?>/g, '\n').replace(/<\/(p|div|tr|table)>/g, '\n').replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;| /g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
+  MailApp.sendEmail(to, email.subject, plain, { htmlBody: email.html, name: 'Számlák' });
+}
+
+/**
+ * Helper for building the meter-reading import: converts the newest Fő út 191
+ * gas and electricity bill PDFs to text and writes it to the execution log.
+ * Needs the Drive advanced service (enabled in appsscript.json).
+ */
+function logBillPdfText() {
+  ['gas', 'electricity'].forEach(function (utility) {
+    var src = BILL_SOURCES[utility];
+    var threads = GmailApp.search('from:(' + src.senders.join(' OR ') + ') has:attachment', 0, 20);
+    for (var i = 0; i < threads.length; i++) {
+      var msg = threads[i].getMessages()[0];
+      var bill = parseBillEmail({ from: msg.getFrom(), subject: msg.getSubject(), body: msg.getPlainBody(), attachmentNames: [] });
+      if (!bill || bill.accountId !== CONFIG.accounts[utility]) continue;
+      var pdf = msg.getAttachments().filter(function (a) { return /\.pdf$/i.test(a.getName()); })[0];
+      if (!pdf) continue;
+      Logger.log('===== ' + utility + ' ' + pdf.getName() + ' =====\n' + pdfToText_(pdf));
+      break;
+    }
+  });
+}
+
+function pdfToText_(blob) {
+  var file = Drive.Files.create({ name: 'tmp-szamla-ocr', mimeType: 'application/vnd.google-apps.document' }, blob, { ocrLanguage: 'hu' });
+  try {
+    return DocumentApp.openById(file.id).getBody().getText();
+  } finally {
+    Drive.Files.remove(file.id);
+  }
 }
