@@ -13,9 +13,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Placeholder checks until the app code lands.
-      # Replace or extend with real build/lint/test steps (e.g. npm test, pytest).
-      - name: Check repository
-        run: |
-          test -f README.md
-          echo "CI passed"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Syntax check Apps Script files
+        run: for f in apps-script/*.js; do node --check "$f"; done
+
+      - name: Validate Apps Script manifest
+        run: node -e "JSON.parse(require('fs').readFileSync('apps-script/appsscript.json','utf8'))"
+
+      - name: Unit tests
+        run: node --test
