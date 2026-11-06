@@ -4,7 +4,7 @@ Automation for the "Számlák" Google Sheet (Fő út 191). It runs as a Google A
 
 What it does:
 
-- **Imports MVM Next bills.** Every 4 hours it reads new MVM gas and electricity bill emails in Gmail and writes the invoice number and amount into the matching month on the `Gáz` and `Villany` tabs. Bills for other addresses on the same MVM login are skipped. It never overwrites a cell you filled in; if something doesn't match, it emails you instead.
+- **Imports MVM Next bills.** Once a day (around 7:00) it reads new MVM gas and electricity bill emails in Gmail and writes the invoice number and amount into the matching month on the `Gáz` and `Villany` tabs. Bills for other addresses on the same MVM login are skipped. It never overwrites a cell you filled in; if something doesn't match, it emails you instead.
 - **Emails you about new bills** (formatted HTML) with the amount, due date and a pay link.
 - **Reminds you to submit meter readings.** Gas: 23rd to 26th every month. Electricity: 1st to 7th of February, May, August and November. You get one email when the window opens and one on its last day.
 
