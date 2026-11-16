@@ -2,7 +2,10 @@
  * Pure helpers: no Google services here, so they can be unit tested with Node.
  */
 
-/** Which bill emails belong to which utility, and which accounts belong to Fő út 191. */
+/**
+ * Which bill emails belong to which source. Each flat (see PROPERTIES in Config.js) picks the
+ * sources it uses and the account number that belongs to it.
+ */
 var BILL_SOURCES = {
   gas: {
     senders: ['ugyfelszolgalat@online.mvmnext.hu'],
@@ -26,8 +29,26 @@ var BILL_SOURCES = {
     dueLabel: /fizetési határideje:\s*(\d{4}\.\d{2}\.\d{2})/i,
     // Flip's bill notice has no invoice number; it is filled in later from the payment confirmation.
     noInvoice: true
+  },
+  one: {
+    senders: ['no-reply@one.hu'],
+    subject: /új számlája készült/i,
+    accountLabel: /(\d+)\s*számlafizető azonosító/,
+    amountLabel: /Számla alapján fizetendő:\s*(-?[\d.\s]*\d)\s*Ft/,
+    // One's bill notice has no invoice number either.
+    noInvoice: true
+  },
+  dijnet: {
+    senders: ['ugyfelszolgalat@dijnet.hu'],
+    subject: /díjnet számla érkezett/i,
+    accountLabel: /Ügyfélazonosító\s*:\s*(\d+)/,
+    invoiceLabel: /Terhelési összesítő\s*:\s*(\d+)/,
+    dueLabel: /Fizetési határidő\s*:\s*(\d{4}\.\d{2}\.\d{2})/
   }
 };
+
+/** Senders of meter-reading confirmations and reading-window notices. */
+var READING_SENDERS = ['noreply@vizmuvek.hu', 'server@dijnet.hu'];
 
 var DEFAULT_AMOUNT_LABEL = /Fizetendő összeg:\s*(-?[\d.\s]*\d)\s*(?:Ft|HUF)/;
 var DEFAULT_DUE_LABEL = /Fizetési határidő:\s*(\d{4}\.\d{2}\.\d{2})/;
@@ -112,6 +133,70 @@ function parseFlipPayment(email) {
     out.push({ invoiceNo: m[3], amount: parseForint_(m[4]), monthKey: m[1] + '.' + m[2] });
   }
   return out;
+}
+
+/**
+ * Parses a water meter-reading confirmation: Fővárosi Vízművek "Mérőállás bejelentés - visszaigazolás"
+ * or Díjnet "Mérőállás bejelentés".
+ * @param {{from: string, subject: string, body: string}} email
+ * @param {string} emailDate the date the email arrived, "yyyy.mm.dd" (used when the email has no reading date)
+ * @return {?{meter: string, value: number, date: string}[]} null when it is not a reading confirmation
+ */
+function parseMeterReadings(email, emailDate) {
+  var sender = senderAddress_(email.from);
+  var subject = String(email.subject || '');
+  var text = normalizeBody_(email.body);
+  var out = [];
+  var m;
+  if (sender === 'noreply@vizmuvek.hu' && /mérőállás bejelentés/i.test(subject)) {
+    var re = /Gyári szám:\s*([A-Z0-9]+)\s*Mérőállás:\s*(\d+(?:[.,]\d+)?)\s*m3/g;
+    while ((m = re.exec(text)) !== null) out.push({ meter: m[1], value: parseForint_(m[2]), date: emailDate });
+    return out;
+  }
+  if (sender === 'server@dijnet.hu' && /mérőállás bejelentés/i.test(subject)) {
+    var re2 = /Gyáriszám:\s*([A-Z0-9]+).*?Aktuális mérőállás:\s*(\d+(?:[.,]\d+)?)\s*Leolvasás ideje:\s*(\d{4}\.\d{2}\.\d{2})/g;
+    while ((m = re2.exec(text)) !== null) out.push({ meter: m[1], value: parseForint_(m[2]), date: m[3] });
+    return out;
+  }
+  return null;
+}
+
+/**
+ * Parses a Fővárosi Vízművek "diktálási időszak kezdetéről" notice.
+ * @return {?{address: string, start: string, end: string}} null when it is not such a notice
+ *   or it has no dates.
+ */
+function parseWaterWindow(email) {
+  if (senderAddress_(email.from) !== 'noreply@vizmuvek.hu' || !/diktálási időszak kezdetéről/i.test(email.subject || '')) return null;
+  var text = normalizeBody_(email.body);
+  var start = text.match(/Diktálási időszak kezdete:\s*(\d{4}\.\d{2}\.\d{2})/);
+  var end = text.match(/Diktálási időszak vége:\s*(\d{4}\.\d{2}\.\d{2})/);
+  if (!start || !end) return null;
+  var addr = text.match(/Felhasználási hely(?: címe)?:\s*(.+?)\s*(?:Gyári szám|$)/);
+  return { address: addr ? addr[1].trim() : '', start: start[1], end: end[1] };
+}
+
+/**
+ * Decides what to write for one meter reading.
+ * @param {string[][]} rows display values of the tab, header row included
+ * @param {string} monthKey e.g. "2026.10" (the month of the reading)
+ * @param {number} col zero-based column of this meter
+ * @param {number} value the reading
+ * @return {{action: string, row?: number, writes?: Object, reason?: string}} same shape as planSheetUpdate
+ */
+function planReadingUpdate(rows, monthKey, col, value) {
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][0]).trim() !== monthKey) continue;
+    var current = String(rows[i][col] || '').trim();
+    if (current === '') {
+      var writes = {};
+      writes[col + 1] = value;
+      return { action: 'write', row: i + 1, writes: writes };
+    }
+    if (parseForint_(current) === value) return { action: 'already', row: i + 1 };
+    return { action: 'conflict', row: i + 1, reason: 'mérőállás ' + current };
+  }
+  return { action: 'conflict', reason: 'nincs ' + monthKey + ' sor' };
 }
 
 /**
@@ -202,6 +287,24 @@ function readingRemindersFor(today, windows) {
   return out;
 }
 
+/**
+ * Reminders for reading windows with exact dates (from Vízművek notices): one on the last day.
+ * @param {{year: number, month: number, day: number}} today
+ * @param {{utility: string, name: string, start: string, end: string, url: ?string}[]} windows
+ */
+function datedRemindersFor(today, windows) {
+  var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  var key = today.year + '.' + pad(today.month) + '.' + pad(today.day);
+  return (windows || []).filter(function (w) { return w.end === key; }).map(function (w) {
+    return { utility: w.utility, name: w.name, kind: 'last-day', start: w.start, end: w.end, url: w.url || null };
+  });
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { parseBillEmail: parseBillEmail, parseFlipPayment: parseFlipPayment, planSheetUpdate: planSheetUpdate, readingRemindersFor: readingRemindersFor, READING_WINDOWS: READING_WINDOWS };
+  module.exports = {
+    parseBillEmail: parseBillEmail, parseFlipPayment: parseFlipPayment, planSheetUpdate: planSheetUpdate,
+    readingRemindersFor: readingRemindersFor, READING_WINDOWS: READING_WINDOWS,
+    parseMeterReadings: parseMeterReadings, parseWaterWindow: parseWaterWindow, planReadingUpdate: planReadingUpdate,
+    datedRemindersFor: datedRemindersFor
+  };
 }
