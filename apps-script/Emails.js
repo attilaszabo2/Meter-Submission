@@ -3,6 +3,9 @@
  * Styles are inline because Gmail drops most <style> blocks.
  */
 
+// Set by config_() to the flat's name.
+var EMAIL_HEADER = 'Számlák';
+
 var EMAIL_COLORS = {
   text: '#1f2933',
   muted: '#616e7c',
@@ -129,7 +132,8 @@ function renderSummaryEmail(title, intro, r, footer) {
   inner += '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:4px 0 8px;"><tr>' +
     stat('beírva', r.written.length, c.ok) + gap +
     stat('már a táblában', r.already.length) + gap +
-    stat('nézd meg', r.conflicts.length + r.unreadable.length, (r.conflicts.length + r.unreadable.length) ? c.warn : c.text) + gap +
+    stat('nézd meg', r.conflicts.length + r.unreadable.length + (r.readingConflicts || []).length,
+      (r.conflicts.length + r.unreadable.length + (r.readingConflicts || []).length) ? c.warn : c.text) + gap +
     stat('más címhez', r.otherAddress) +
     '</tr></table>';
 
@@ -143,6 +147,19 @@ function renderSummaryEmail(title, intro, r, footer) {
     inner += '<div style="font-size:12px;color:' + c.muted + ';">Az adott hónapban már van más érték. Ezek többnyire helyesbítő vagy jóváíró számlák.</div>';
     inner += table_(['Hónap', 'Közmű', 'Számlaszám', 'Összeg', 'A táblában most'],
       r.conflicts.map(function (e) { return [e.monthKey, e.tab, e.bill.invoiceNo || '—', formatFt(e.bill.amount), e.reason]; }), [3]);
+  }
+  var readingsWritten = r.readingsWritten || [];
+  var readingConflicts = r.readingConflicts || [];
+  if (readingsWritten.length) {
+    inner += section_('Beírt mérőállások', c.ok);
+    inner += table_(['Dátum', 'Mérő', 'Állás'],
+      readingsWritten.map(function (e) { return [e.date, e.meter, e.value + ' m³']; }), [2]);
+  }
+  if (readingConflicts.length) {
+    inner += section_('Mérőállás, amit nem írtam be', c.warn);
+    inner += '<div style="font-size:12px;color:' + c.muted + ';">Abban a hónapban már más állás szerepel ennél a mérőnél.</div>';
+    inner += table_(['Dátum', 'Mérő', 'Állás', 'A táblában most'],
+      readingConflicts.map(function (e) { return [e.date, e.meter, e.value + ' m³', e.reason]; }), [2]);
   }
   if (r.unreadable.length) {
     inner += section_('Nem tudtam értelmezni', c.warn);
