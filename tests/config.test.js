@@ -31,3 +31,12 @@ test('every flat uses known sources with distinct labels', () => {
   }
   assert.strictEqual(Object.keys(props).length, 2);
 });
+
+test('email header shows the flat chosen by config_()', () => {
+  const ctx = loadScripts();
+  ctx.SpreadsheetApp = { getActiveSpreadsheet: () => ({ getId: () => '1qAJjk1ZCJ7At-i-YxkhQYMA-wfsu0jHmyqRtf6uMyPQ' }) };
+  vm.runInContext('config_()', ctx);
+  const html = vm.runInContext("renderSummaryEmail('t', '', { written: [], already: [], conflicts: [], unreadable: [], otherAddress: 0 }, '').html", ctx);
+  assert.match(html, /Számlák · Babér utca 35/);
+  assert.doesNotMatch(html, /Fő út 191/);
+});

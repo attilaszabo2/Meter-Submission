@@ -35,7 +35,7 @@ function layout_(title, inner, footer) {
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:' + c.bg + ';padding:24px 12px;">' +
     '<tr><td align="center">' +
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border:1px solid ' + c.border + ';border-radius:8px;font-family:Arial,Helvetica,sans-serif;color:' + c.text + ';">' +
-    '<tr><td style="padding:20px 24px 4px;font-size:13px;color:' + c.muted + ';">Számlák · Fő út 191</td></tr>' +
+    '<tr><td style="padding:20px 24px 4px;font-size:13px;color:' + c.muted + ';">' + esc_(EMAIL_HEADER) + '</td></tr>' +
     '<tr><td style="padding:0 24px 12px;font-size:20px;font-weight:bold;">' + esc_(title) + '</td></tr>' +
     '<tr><td style="padding:0 24px 20px;font-size:14px;line-height:1.5;">' + inner + '</td></tr>' +
     (footer ? '<tr><td style="padding:12px 24px;border-top:1px solid ' + c.border + ';font-size:12px;color:' + c.muted + ';">' + footer + '</td></tr>' : '') +
